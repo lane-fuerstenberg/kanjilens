@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kanjilens"
+version = "0.1.0"
+description = "Japanese OCR to Anki flashcard pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "manga-ocr",
+    "Pillow",
+    "click",
+    "tomli; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[project.scripts]
+kanjilens = "kanjilens.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kanjilens"]
+
+[tool.ruff]
+line-length = 88
