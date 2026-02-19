@@ -1,19 +1,26 @@
 """Screen capture with region selection and clipboard reading.
 
 Supports three environments:
+- Native Windows: uses ms-screenclip: URI and PIL.ImageGrab
 - WSL2: uses powershell.exe to talk to the Windows clipboard/snipping tool
 - Native Linux: uses maim or ImageMagick import
-- Native Windows: uses PowerShell directly
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 
 from PIL import Image
+
+
+def _is_windows() -> bool:
+    return sys.platform == "win32"
 
 
 def _is_wsl() -> bool:
@@ -95,6 +102,51 @@ def _snip_via_powershell() -> Image.Image:
     return _read_clipboard_via_powershell()
 
 
+# -- Native Windows capture (no PowerShell needed) ----------------------------
+
+
+def _read_clipboard_image() -> Image.Image | None:
+    """Read an image from the Windows clipboard using PIL."""
+    from PIL import ImageGrab
+
+    return ImageGrab.grabclipboard()
+
+
+def _clear_clipboard_win32() -> None:
+    """Clear the Windows clipboard using ctypes."""
+    import ctypes
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    user32.OpenClipboard(None)
+    user32.EmptyClipboard()
+    user32.CloseClipboard()
+
+
+def _snip_native_windows() -> Image.Image:
+    """Launch Windows Snipping Tool and wait for the image to land on clipboard."""
+    _clear_clipboard_win32()
+
+    os.startfile("ms-screenclip:")  # type: ignore[attr-defined]
+
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        time.sleep(0.3)
+        img = _read_clipboard_image()
+        if img is not None:
+            return img.convert("RGB")
+
+    raise RuntimeError("No snip captured (timed out or cancelled).")
+
+
+def _read_clipboard_native_windows() -> Image.Image:
+    """Read an image already on the Windows clipboard."""
+    img = _read_clipboard_image()
+    if img is None:
+        raise RuntimeError(
+            "No image in clipboard. Copy an image first (Win+Shift+S)."
+        )
+    return img.convert("RGB")
+
+
 # -- Native Linux capture tools -----------------------------------------------
 
 
@@ -152,9 +204,12 @@ def _capture_linux_region() -> Image.Image:
 def capture_region() -> Image.Image:
     """Open a region selector and return the captured image.
 
-    On WSL/Windows: launches the Windows Snipping Tool.
+    On native Windows: launches ms-screenclip and reads clipboard via PIL.
+    On WSL: launches the Windows Snipping Tool via PowerShell.
     On native Linux: uses maim or ImageMagick import.
     """
+    if _is_windows():
+        return _snip_native_windows()
     if _is_wsl():
         return _snip_via_powershell()
     return _capture_linux_region()
@@ -163,9 +218,12 @@ def capture_region() -> Image.Image:
 def capture_clipboard() -> Image.Image:
     """Read an image from the system clipboard.
 
-    On WSL/Windows: reads from the Windows clipboard via PowerShell.
+    On native Windows: reads via PIL.ImageGrab.
+    On WSL: reads from the Windows clipboard via PowerShell.
     On native Linux: not yet supported (use --screenshot instead).
     """
+    if _is_windows():
+        return _read_clipboard_native_windows()
     if _is_wsl():
         return _read_clipboard_via_powershell()
     raise RuntimeError(

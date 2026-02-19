@@ -18,10 +18,18 @@ dependencies = [
 dev = [
     "pytest",
     "ruff",
+    "pyinstaller",
+]
+windows = [
+    "pyperclip",
+    "pystray",
 ]
 
 [project.scripts]
 kanjilens = "kanjilens.cli:main"
+
+[project.gui-scripts]
+kanjilens-gui = "kanjilens.gui:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kanjilens"]
