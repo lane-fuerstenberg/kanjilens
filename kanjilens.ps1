@@ -1,5 +1,5 @@
 # kanjilens.ps1 - Long-running hotkey listener for kanjilens OCR
-# Press Ctrl+Shift+K to snip a region and OCR it.
+# Press Ctrl+Shift+Z to snip a region and OCR it.
 # Results appear in a floating overlay that auto-dismisses after 5 seconds.
 # Press Ctrl+C to stop.
 
@@ -40,63 +40,14 @@ public static class HotKeyHelper {
     public const int WM_HOTKEY = 0x0312;
     public const uint MOD_CONTROL = 0x0002;
     public const uint MOD_SHIFT = 0x0004;
-    public const uint VK_K = 0x4B;
+    public const uint VK_Z = 0x5A;
 }
 "@
 
 $HOTKEY_ID = 1
 
-function Show-Overlay {
-    param([string]$Text)
-
-    # Spawn a separate PowerShell process for the overlay so it gets its own
-    # message loop, avoiding conflicts with our hotkey PeekMessage loop.
-    $escapedText = $Text -replace '"', '\"' -replace "'", "''"
-    Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', @"
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-
-`$font = New-Object System.Drawing.Font('Meiryo UI', 18)
-`$bmp = New-Object System.Drawing.Bitmap(1, 1)
-`$g = [System.Drawing.Graphics]::FromImage(`$bmp)
-`$sz = `$g.MeasureString('$escapedText', `$font, (New-Object System.Drawing.SizeF(760, 0)))
-`$g.Dispose(); `$bmp.Dispose()
-
-`$pad = 24
-`$w = [int](`$sz.Width + `$pad * 2 + 2)
-`$h = [int](`$sz.Height + `$pad * 2 + 2)
-
-`$form = New-Object System.Windows.Forms.Form
-`$form.FormBorderStyle = 'None'
-`$form.StartPosition = 'Manual'
-`$form.TopMost = `$true
-`$form.ShowInTaskbar = `$false
-`$form.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
-`$form.Opacity = 0.92
-`$form.ClientSize = New-Object System.Drawing.Size(`$w, `$h)
-
-`$label = New-Object System.Windows.Forms.Label
-`$label.Text = '$escapedText'
-`$label.ForeColor = [System.Drawing.Color]::White
-`$label.Font = `$font
-`$label.Location = New-Object System.Drawing.Point(`$pad, `$pad)
-`$label.Size = New-Object System.Drawing.Size((`$w - `$pad * 2), (`$h - `$pad * 2))
-`$form.Controls.Add(`$label)
-
-`$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-`$form.Location = New-Object System.Drawing.Point((`$screen.Right - `$w - 20), (`$screen.Bottom - `$h - 20))
-
-`$form.Add_Click({ `$form.Close() })
-`$label.Add_Click({ `$form.Close() })
-
-`$timer = New-Object System.Windows.Forms.Timer
-`$timer.Interval = 5000
-`$timer.Add_Tick({ `$form.Close() })
-`$timer.Start()
-
-[System.Windows.Forms.Application]::Run(`$form)
-"@
-}
+# TODO: overlay disabled for now, revisit later
+# $overlayScript = Join-Path $env:TEMP "kanjilens-overlay.ps1"
 
 function Invoke-KanjiLens {
     # Clear the clipboard so we can detect when a new image arrives
@@ -137,7 +88,17 @@ function Invoke-KanjiLens {
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
         $wslPath = wsl wslpath -a $tmp.Replace('\', '\\')
-        $result = wsl bash -c "cd ~/projects/kanjilens && source .venv/bin/activate && kanjilens '$wslPath'" 2>&1
+        # Talk directly to the OCR server over Unix socket for minimal latency
+        $result = wsl python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect('/tmp/kanjilens.sock')
+s.sendall(sys.argv[1].encode())
+s.shutdown(socket.SHUT_WR)
+d = b''
+while c := s.recv(4096): d += c
+sys.stdout.buffer.write(d)
+" "$wslPath"
         $text = ($result | Out-String).Trim()
 
         [Console]::OutputEncoding = $prevEncoding
@@ -147,12 +108,51 @@ function Invoke-KanjiLens {
             return
         }
 
-        Write-Host "OCR: $text"
-        Show-Overlay -Text $text
+        Write-Host $text
+        [System.Windows.Forms.Clipboard]::SetText($text)
     }
     finally {
         Remove-Item $tmp -ErrorAction SilentlyContinue
     }
+}
+
+# --- Start OCR server if not already running ---
+
+$socketPath = "/tmp/kanjilens.sock"
+# Check if a server is actually responding, not just if the socket file exists
+$healthCheck = @'
+import socket
+try:
+    s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+    s.connect("/tmp/kanjilens.sock")
+    s.close()
+    print("yes")
+except:
+    print("no")
+'@
+$serverRunning = ($healthCheck | wsl python3)
+if ($serverRunning -ne "yes") {
+    # Clean up stale socket
+    wsl rm -f $socketPath 2>$null
+    Write-Host "Starting OCR server (loading model)..." -ForegroundColor Cyan
+    $serverLog = Join-Path $env:TEMP "kanjilens-server.log"
+    $wslLog = "/tmp/kanjilens-server.log"
+    Start-Process wsl -WindowStyle Hidden -ArgumentList 'bash', '-c', "cd ~/projects/kanjilens && source .venv/bin/activate && kanjilens serve > $wslLog 2>&1"
+    # Wait for the socket to appear
+    $deadline = (Get-Date).AddSeconds(120)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 1000
+        $ready = wsl bash -c "test -S $socketPath && echo yes"
+        if ($ready -eq "yes") { break }
+    }
+    if ($ready -ne "yes") {
+        Write-Host "OCR server failed to start. Log:" -ForegroundColor Red
+        wsl cat $wslLog 2>$null
+        exit 1
+    }
+    Write-Host "OCR server ready. Log: $wslLog (in WSL)" -ForegroundColor Cyan
+} else {
+    Write-Host "OCR server already running." -ForegroundColor Cyan
 }
 
 # --- Main ---
@@ -161,15 +161,15 @@ $registered = [HotKeyHelper]::RegisterHotKey(
     [IntPtr]::Zero,
     $HOTKEY_ID,
     [HotKeyHelper]::MOD_CONTROL -bor [HotKeyHelper]::MOD_SHIFT,
-    [HotKeyHelper]::VK_K
+    [HotKeyHelper]::VK_Z
 )
 
 if (-not $registered) {
-    Write-Host "Failed to register hotkey Ctrl+Shift+K. Is another instance running?" -ForegroundColor Red
+    Write-Host "Failed to register hotkey Ctrl+Shift+Z. Is another instance running?" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "kanjilens is running. Press Ctrl+Shift+K to snip and OCR." -ForegroundColor Green
+Write-Host "kanjilens is running. Press Ctrl+Shift+Z to snip and OCR." -ForegroundColor Green
 Write-Host "Press Ctrl+C to stop."
 
 try {
@@ -192,5 +192,7 @@ try {
 }
 finally {
     [HotKeyHelper]::UnregisterHotKey([IntPtr]::Zero, $HOTKEY_ID) | Out-Null
+    # Stop the OCR server we started
+    wsl bash -c "rm -f /tmp/kanjilens.sock; pkill -f 'kanjilens serve'" 2>$null
     Write-Host "`nHotkey unregistered. Goodbye." -ForegroundColor Green
 }
