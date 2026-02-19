@@ -133,14 +133,29 @@ tkinter is the path of least resistance since it ships with Python.
 
 4. The existing Linux/WSL code paths in `capture.py` remain for Linux users.
 
-## New dependencies for Windows-native build
+## Dependencies for Windows-native build
 
 ```
-pynput        # global hotkey
+pyperclip     # text clipboard
 pystray       # system tray icon
-pyperclip     # text clipboard (or just use ctypes)
 pyinstaller   # packaging (dev dependency)
 ```
 
 All other dependencies (manga-ocr, Pillow, PyTorch) already have Windows
-wheels.
+wheels. Hotkey registration uses ctypes (no extra dependency).
+
+## Building with PyInstaller
+
+From a Windows machine with the venv activated:
+
+```
+pip install -e ".[dev,windows]"
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pyinstaller kanjilens.spec
+```
+
+This produces `dist/kanjilens/` with `kanjilens.exe` and all dependencies.
+The folder will be large (~1-2 GB) due to PyTorch and CUDA libraries.
+
+To run: double-click `kanjilens.exe`. It starts in the system tray and
+listens for Ctrl+Shift+Z.

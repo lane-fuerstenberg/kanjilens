@@ -18,9 +18,11 @@ dependencies = [
 dev = [
     "pytest",
     "ruff",
+    "pyinstaller",
 ]
 windows = [
     "pyperclip",
+    "pystray",
 ]
 
 [project.scripts]
