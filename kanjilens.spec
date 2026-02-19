@@ -33,7 +33,6 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         # unused torch backends to reduce size
-        'torch.distributed',
         'torch.testing',
         'torch.utils.tensorboard',
         # unused ML libraries
