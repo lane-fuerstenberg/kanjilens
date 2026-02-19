@@ -1,0 +1,54 @@
+# Test PyInstaller packaging without waiting for GitHub Actions.
+#
+# Usage:
+#   docker build -f Dockerfile.build-test -t kanjilens-build-test .
+#   docker run --rm kanjilens-build-test
+#
+# This runs on Linux with CPU-only PyTorch to validate that PyInstaller
+# can resolve all imports. It won't produce a working Windows exe, but
+# catches ModuleNotFoundError issues like torch.distributed / torch.testing.
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system deps for Pillow and PyInstaller
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    binutils \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml kanjilens.spec ./
+COPY src/ src/
+
+# CPU-only torch (much faster to download)
+RUN pip install --no-cache-dir \
+    torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+RUN pip install --no-cache-dir -e ".[dev]"
+
+# Install pystray and pyperclip even though they won't fully work on Linux,
+# PyInstaller just needs to resolve the imports
+RUN pip install --no-cache-dir pyperclip pystray protobuf
+
+# Run PyInstaller analysis + build
+# --noconfirm to avoid prompts, console=True override since no Windows GUI
+RUN pyinstaller kanjilens.spec 2>&1 || true
+
+# Verify the frozen app can at least import without ModuleNotFoundError
+# by running it and checking the error isn't an import issue
+RUN printf '%s\n' \
+  'import subprocess, sys' \
+  'try:' \
+  '    r = subprocess.run(["./dist/kanjilens/kanjilens"], capture_output=True, text=True, timeout=15)' \
+  '    out = r.stdout + r.stderr' \
+  'except subprocess.TimeoutExpired as e:' \
+  '    out = (e.stdout or "") + (e.stderr or "")' \
+  '    print("Process still running after 15s (no crash)")' \
+  'print(out[:2000])' \
+  'has_err = "ModuleNotFoundError" in out or "ImportError" in out' \
+  'print()' \
+  'print("RESULT:", "FAIL - missing module" if has_err else "PASS - no import errors")' \
+  'sys.exit(1 if has_err else 0)' \
+  > /app/test_build.py
+
+CMD ["python", "/app/test_build.py"]

@@ -7,14 +7,32 @@
 
 import sys
 from pathlib import Path
+import importlib
 
 block_cipher = None
+
+# Collect data files that libraries need at runtime
+extra_datas = []
+
+# unidic_lite dictionary files (needed by fugashi tokenizer)
+try:
+    unidic_path = Path(importlib.import_module('unidic_lite').__file__).parent
+    extra_datas.append((str(unidic_path / 'dicdir'), 'unidic_lite/dicdir'))
+except ImportError:
+    pass
+
+# manga_ocr source files (transformers inspects source at runtime)
+try:
+    manga_ocr_path = Path(importlib.import_module('manga_ocr').__file__).parent
+    extra_datas.append((str(manga_ocr_path), 'manga_ocr'))
+except ImportError:
+    pass
 
 a = Analysis(
     ['src/kanjilens/gui.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=extra_datas,
     hiddenimports=[
         # manga-ocr pulls in transformers which has dynamic imports
         'manga_ocr',
@@ -22,9 +40,14 @@ a = Analysis(
         'transformers.models.vision_encoder_decoder',
         'transformers.models.vit',
         'transformers.models.bert',
+        'transformers.models.bert_japanese',
         'sentencepiece',
         'torch',
         'torchvision',
+        # tokenizer dependencies
+        'unidic_lite',
+        'fugashi',
+        'protobuf',
         # pystray backend on Windows
         'pystray._win32',
     ],
@@ -32,8 +55,6 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # unused torch backends to reduce size
-        'torch.testing',
         'torch.utils.tensorboard',
         # unused ML libraries
         'tensorflow',

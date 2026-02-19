@@ -19,6 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+          pip install protobuf
           pip install -e ".[dev,windows]"
 
       - name: Build with PyInstaller
