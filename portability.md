@@ -150,7 +150,7 @@ From a Windows machine with the venv activated:
 
 ```
 pip install -e ".[dev,windows]"
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 pyinstaller kanjilens.spec
 ```
 
